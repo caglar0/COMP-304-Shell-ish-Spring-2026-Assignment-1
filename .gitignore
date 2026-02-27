@@ -1,0 +1,20 @@
+# Emacs backups
+*~
+\#*\#
+.#*
+
+# Vim
+*.swp
+*.swo
+
+# Compiled C files
+shell-ish
+*.o
+*.out
+a.out
+
+# Executables
+shellish
+
+# Mac/Linux junk
+.DS_Store
