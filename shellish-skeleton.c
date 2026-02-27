@@ -307,67 +307,7 @@ int prompt(struct command_t *command) {
   return SUCCESS;
 }
 
-int process_command(struct command_t *command) {
-  int r;
-  if (strcmp(command->name, "") == 0)
-    return SUCCESS;
-
-  if (strcmp(command->name, "exit") == 0)
-    return EXIT;
-
-  if (strcmp(command->name, "cd") == 0) {
-    if (command->arg_count > 0) {
-      r = chdir(command->args[1]);
-      if (r == -1)
-        printf("-%s: %s: %s\n", sysname, command->name, strerror(errno));
-      return SUCCESS;
-    }
-  }
-
-  pid_t pid = fork();
-  if (pid == 0) // child
-  {
-
-    //PART 2:
-
-    // input redirection <
-    if (command->redirects[0]) {
-      int fd = open(command->redirects[0], O_RDONLY);
-      
-      dup2(fd, STDIN_FILENO);
-      close(fd);
-    }
-
-    // output redirection >
-    if (command->redirects[1]) {
-      int fd = open(command->redirects[1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-
-      dup2(fd, STDOUT_FILENO);
-      close(fd);
-    }
-
-    // output redirection >>
-    if (command->redirects[2]) {
-      int fd = open(command->redirects[2], O_WRONLY | O_CREAT | O_APPEND, 0644);
-
-      dup2(fd, STDOUT_FILENO);
-      close(fd);
-    }
-    
-    /// This shows how to do exec with environ (but is not available on MacOs)
-    // extern char** environ; // environment variables
-    // execvpe(command->name, command->args, environ); // exec+args+path+environ
-
-    /// This shows how to do exec with auto-path resolve
-    // add a NULL argument to the end of args, and the name to the beginning
-    // as required by exec
-
-    // TODO: do your own exec with path resolving using execv()
-    // do so by replacing the execvp call below
-    /*execvp(command->name, command->args); // exec+args+path
-    printf("-%s: %s: command not found\n", sysname, command->name);
-    exit(127);*/
-
+void exec_command(struct command_t *command) {
      // if the command contains '/' (eg. /bin/ls) call execv() directly 
     if (strchr(command->name, '/')) {  
       execv(command->name, command->args);
@@ -421,6 +361,109 @@ int process_command(struct command_t *command) {
     free(path_copy);
     exit(127);
   
+}
+
+int process_command(struct command_t *command) {
+  int r;
+  if (strcmp(command->name, "") == 0)
+    return SUCCESS;
+
+  if (strcmp(command->name, "exit") == 0)
+    return EXIT;
+
+  if (strcmp(command->name, "cd") == 0) {
+    if (command->arg_count > 0) {
+      r = chdir(command->args[1]);
+      if (r == -1)
+        printf("-%s: %s: %s\n", sysname, command->name, strerror(errno));
+      return SUCCESS;
+    }
+  }
+
+  // PART 2-piping
+  
+  if (command->next) {
+    int fd[2];
+    pipe(fd); //create the pipe
+
+    // fork left child (write end)
+    pid_t pid_left = fork();
+    
+    if (pid_left == 0) {
+      dup2(fd[1], STDOUT_FILENO);
+      close(fd[0]);
+      close(fd[1]);
+      exec_command(command);
+      exit(127);
+    }
+
+     // fork right child (read end)
+    pid_t pid_right = fork();
+    
+    if (pid_right == 0) {
+      dup2(fd[0], STDIN_FILENO);
+      close(fd[1]);
+      close(fd[0]);
+      exit(process_command(command->next));
+    }
+
+    // parent must close BOTH ends
+    close(fd[0]);
+    close(fd[1]);
+
+    // wait for both children
+    waitpid(pid_left, NULL, 0);
+    waitpid(pid_right, NULL, 0);
+    return SUCCESS;
+  }
+  
+  pid_t pid = fork();
+  if (pid == 0) // child
+  {
+
+    //PART 2-redirection:
+
+    // input redirection <
+    if (command->redirects[0]) {
+      int fd = open(command->redirects[0], O_RDONLY);
+      
+      dup2(fd, STDIN_FILENO);
+      close(fd);
+    }
+
+    // output redirection >
+    if (command->redirects[1]) {
+      int fd = open(command->redirects[1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+      dup2(fd, STDOUT_FILENO);
+      close(fd);
+    }
+
+    // output redirection >>
+    if (command->redirects[2]) {
+      int fd = open(command->redirects[2], O_WRONLY | O_CREAT | O_APPEND, 0644);
+
+      dup2(fd, STDOUT_FILENO);
+      close(fd);
+    }
+    
+    /// This shows how to do exec with environ (but is not available on MacOs)
+    // extern char** environ; // environment variables
+    // execvpe(command->name, command->args, environ); // exec+args+path+environ
+
+    /// This shows how to do exec with auto-path resolve
+    // add a NULL argument to the end of args, and the name to the beginning
+    // as required by exec
+
+    // TODO: do your own exec with path resolving using execv()
+    // do so by replacing the execvp call below
+    /*execvp(command->name, command->args); // exec+args+path
+    printf("-%s: %s: command not found\n", sysname, command->name);
+    exit(127);*/
+
+    exec_command(command); // never returns on success
+    exit(127);
+    
   } else {
     // TODO: implement background processes here
     //wait(0); // wait for child process to finish
