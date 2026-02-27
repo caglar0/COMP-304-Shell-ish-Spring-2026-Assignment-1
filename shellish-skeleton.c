@@ -300,14 +300,14 @@ int prompt(struct command_t *command) {
 
   parse_command(buf, command);
 
-  // print_command(command); // DEBUG: uncomment for debugging
+  //print_command(command); // DEBUG: uncomment for debugging
 
   // restore the old settings
   tcsetattr(STDIN_FILENO, TCSANOW, &backup_termios);
   return SUCCESS;
 }
 
-void exec_command(struct command_t *command) {
+void exec_command(struct command_t *command) {  // execv function
      // if the command contains '/' (eg. /bin/ls) call execv() directly 
     if (strchr(command->name, '/')) {  
       execv(command->name, command->args);
@@ -363,6 +363,85 @@ void exec_command(struct command_t *command) {
   
 }
 
+int cut_command(struct command_t *command) { // cut command implementation
+  
+  if (strcmp(command->name, "cut") == 0) {
+    
+    char delimiter = '\t'; //default delimiter is tab
+    int fields[64];   
+    int field_count = 0;    
+
+    // parsing through args
+    for (int i = 1; i < command->arg_count - 1; i++) {
+      if (command->args[i] == NULL) break;
+
+      if (strcmp(command->args[i], "-d") == 0 || strcmp(command->args[i], "--delimiter") == 0) {
+	// handle the special case where user typed -d " " (space delimiter)
+	// the parser splits " " into two quote characters
+	if (command->args[i+1][0] == '"' || command->args[i+1][0] == '\'') {
+	  delimiter = ' ';
+	  i += 2; //skip the space and quotation 
+	} else {
+	  delimiter = command->args[i+1][0];
+	  i++;    // skip the delimiter since it is already obtained
+	}
+      }
+
+      if (strncmp(command->args[i], "-f", 2) == 0 || strcmp(command->args[i], "--fields") == 0) {  //strncmp because -f1,3,6 is count as one arg
+
+	char *fields_str;
+   	
+	if (strncmp(command->args[i], "-f", 2) == 0) {
+	    fields_str = command->args[i] + 2; // points to 1,3,6 part of -f1,3,6
+	  } else {
+	    fields_str = command->args[i+1];
+	    i++;
+	  }
+	  
+	char *token = strtok(fields_str, ",");
+	while (token != NULL) {
+	  fields[field_count] = atoi(token) - 1; // convert to 0-indexed and store 
+	  token = strtok(NULL, ",");
+	  field_count++;
+	}
+      }
+    }
+
+    char line[4096];
+    char *tokens[256];
+    char *token;
+    while (fgets(line, sizeof(line), stdin)) {  //loop over each line
+      int token_count = 0;
+      
+        // strip trailing newline
+      line[strcspn(line ,"\n")] = '\0';
+      
+        // tokenize the line by delimiter
+        // store tokens in char *tokens[256], count them
+      token = strtok(line, &delimiter);
+      while (token != NULL) {
+	tokens[token_count] = token;
+	token = strtok(NULL, &delimiter);
+        token_count++;
+	}
+
+        // print the requested fields separated by delimiter
+        // print newline at the end
+      for (int j = 0; j < field_count; j++) {
+	if (fields[j] < token_count) {  // makes sure you don't try to access a token that doesn't exist
+	  printf("%s", tokens[fields[j]]);
+	  
+	  if (j < field_count - 1) {
+	    printf("%c", delimiter);
+	  }
+        }
+      }
+    printf("\n");
+    }
+  }
+  return SUCCESS;
+}
+
 int process_command(struct command_t *command) {
   int r;
   if (strcmp(command->name, "") == 0)
@@ -380,8 +459,8 @@ int process_command(struct command_t *command) {
     }
   }
 
+
   // PART 2-piping
-  
   if (command->next) {
     int fd[2];
     pipe(fd); //create the pipe
@@ -393,6 +472,12 @@ int process_command(struct command_t *command) {
       dup2(fd[1], STDOUT_FILENO);
       close(fd[0]);
       close(fd[1]);
+
+      if (strcmp(command->name, "cut") == 0) {  // for calls with piping (cat /etc/passwd | cut -d ":" -f1,6)
+	cut_command(command);
+	exit(0);
+	}
+       
       exec_command(command);
       exit(127);
     }
@@ -446,7 +531,12 @@ int process_command(struct command_t *command) {
       dup2(fd, STDOUT_FILENO);
       close(fd);
     }
-    
+
+    if (strcmp(command->name, "cut") == 0) {  // for calls with redirection (cut -d ":" -f1,3 <test.txt)
+      cut_command(command);
+      exit(0);
+      }
+
     /// This shows how to do exec with environ (but is not available on MacOs)
     // extern char** environ; // environment variables
     // execvpe(command->name, command->args, environ); // exec+args+path+environ
