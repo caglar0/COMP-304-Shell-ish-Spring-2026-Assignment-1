@@ -336,12 +336,72 @@ int process_command(struct command_t *command) {
 
     // TODO: do your own exec with path resolving using execv()
     // do so by replacing the execvp call below
-    execvp(command->name, command->args); // exec+args+path
+    /*execvp(command->name, command->args); // exec+args+path
     printf("-%s: %s: command not found\n", sysname, command->name);
+    exit(127);*/
+
+     // if the command contains '/' (eg. /bin/ls) call execv() directly 
+    if (strchr(command->name, '/')) {  
+      execv(command->name, command->args);
+      // If execv returns, it FAILED.
+      perror("execv failed");
+      exit(127);
+    }
+
+    // otherwise, we must manually search through PATH.
+    char *path_env = getenv("PATH");   // Get PATH environment variable
+
+    if (path_env == NULL) {
+      fprintf(stderr, "PATH not found\n");
+      exit(127);
+    }
+
+    // strtok modifies the string, so work on a copy of PATH.
+    char *path_copy = strdup(path_env);
+
+    // split PATH by ':'
+    // example PATH:
+    // /usr/local/bin:/usr/bin:/bin
+    char *dir = strtok(path_copy, ":");
+
+    while (dir != NULL) {
+
+      // build full path string:
+      // directory + "/" + command name
+      char fullpath[1024];
+      snprintf(fullpath, sizeof(fullpath), "%s/%s", dir, command->name);
+
+      // check if file exists and is executable
+      if (access(fullpath, X_OK) == 0) {
+
+        // if executable found run it
+        execv(fullpath, command->args);
+
+        // if execv returns it failed
+        perror("execv failed");
+        free(path_copy);
+        exit(127);
+      }
+
+      // try next directory
+      dir = strtok(NULL, ":");
+    }
+
+    // if we exit the loop, command was not found anywhere in PATH.
+    fprintf(stderr, "-%s: %s: command not found\n", sysname, command->name);
+
+    free(path_copy);
     exit(127);
+  
   } else {
     // TODO: implement background processes here
-    wait(0); // wait for child process to finish
+    //wait(0); // wait for child process to finish
+
+    if (command->background){ //if command is called with & parent doesnt wait child
+      printf("background pid %d\n", pid);
+    } else {
+      waitpid(pid, NULL, 0); // parent waits for child.
+    }
     return SUCCESS;
   }
 }
