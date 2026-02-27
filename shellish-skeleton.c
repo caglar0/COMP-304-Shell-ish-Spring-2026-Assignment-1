@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <termios.h> // termios, TCSANOW, ECHO, ICANON
 #include <unistd.h>
+#include <fcntl.h> //for open()
 const char *sysname = "shellish";
 
 enum return_codes {
@@ -326,6 +327,33 @@ int process_command(struct command_t *command) {
   pid_t pid = fork();
   if (pid == 0) // child
   {
+
+    //PART 2:
+
+    // input redirection <
+    if (command->redirects[0]) {
+      int fd = open(command->redirects[0], O_RDONLY);
+      
+      dup2(fd, STDIN_FILENO);
+      close(fd);
+    }
+
+    // output redirection >
+    if (command->redirects[1]) {
+      int fd = open(command->redirects[1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+      dup2(fd, STDOUT_FILENO);
+      close(fd);
+    }
+
+    // output redirection >>
+    if (command->redirects[2]) {
+      int fd = open(command->redirects[2], O_WRONLY | O_CREAT | O_APPEND, 0644);
+
+      dup2(fd, STDOUT_FILENO);
+      close(fd);
+    }
+    
     /// This shows how to do exec with environ (but is not available on MacOs)
     // extern char** environ; // environment variables
     // execvpe(command->name, command->args, environ); // exec+args+path+environ
