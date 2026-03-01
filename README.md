@@ -1,6 +1,6 @@
 # COMP 304 Spring26 Assignment1: Shell-ish
 
-
+Unix-style operating system shell, called Shell-ish
 
 You can run the Makefile by typing "make" in the command line.
 
