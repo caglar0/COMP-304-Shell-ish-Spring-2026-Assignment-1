@@ -12,6 +12,11 @@
 
 const char *sysname = "shellish";
 
+//--------------PART 3c history command ------------------
+#define HISTORY_SIZE 100
+char *history[HISTORY_SIZE];
+int history_count = 0;
+
 enum return_codes {
   SUCCESS = 0,
   EXIT = 1,
@@ -55,7 +60,7 @@ void print_command(struct command_t *command) {
  * @param  command [description]
  * @return         [description]
  */
-int free_command(struct command_t *command) {
+/*int free_command(struct command_t *command) {
   if (command->arg_count) {
     for (int i = 0; i < command->arg_count; ++i)
       free(command->args[i]);
@@ -69,6 +74,46 @@ int free_command(struct command_t *command) {
     command->next = NULL;
   }
   free(command->name);
+  free(command);
+  return 0;
+}*/
+
+int free_command(struct command_t *command) {
+  printf("DEBUG: freeing command: %s\n", command->name);
+  fflush(stdout);
+
+  if (command->arg_count) {
+    for (int i = 0; i < command->arg_count; ++i) {
+      printf("DEBUG: freeing arg[%d]: %s\n", i, command->args[i]);
+      fflush(stdout);
+      free(command->args[i]);
+    }
+    printf("DEBUG: freeing args array\n");
+    fflush(stdout);
+    free(command->args);
+  }
+
+  for (int i = 0; i < 3; ++i) {
+    if (command->redirects[i]) {
+      printf("DEBUG: freeing redirect[%d]: %s\n", i, command->redirects[i]);
+      fflush(stdout);
+      free(command->redirects[i]);
+    }
+  }
+
+  if (command->next) {
+    printf("DEBUG: freeing next command\n");
+    fflush(stdout);
+    free_command(command->next);
+    command->next = NULL;
+  }
+
+  printf("DEBUG: freeing command name: %s\n", command->name);
+  fflush(stdout);
+  free(command->name);
+
+  printf("DEBUG: freeing command struct\n");
+  fflush(stdout);
   free(command);
   return 0;
 }
@@ -147,6 +192,7 @@ int parse_command(char *buf, struct command_t *command) {
     if (strcmp(arg, "|") == 0) {
       struct command_t *c =
           (struct command_t *)malloc(sizeof(struct command_t));
+      memset(c, 0, sizeof(struct command_t)); 
       int l = strlen(pch);
       pch[l] = splitters[0]; // restore strtok termination
       index = 1;
@@ -301,6 +347,13 @@ int prompt(struct command_t *command) {
 
   strcpy(oldbuf, buf);
 
+  //------------ PART 3c history command----------------
+  if (strlen(buf) > 0) {  //saves command before it is parsed to save commands with arguments, piping, redirection etc.
+    history[history_count] = strdup(buf);
+    history_count++;
+  }
+  //---------------------------------------------------
+    
   parse_command(buf, command);
 
   //print_command(command); // DEBUG: uncomment for debugging
@@ -315,7 +368,6 @@ void exec_command(struct command_t *command) {  // execv function
      // if the command contains '/' (eg. /bin/ls) call execv() directly 
     if (strchr(command->name, '/')) {  
       execv(command->name, command->args);
-      // If execv returns, it FAILED.
       perror("execv failed");
       exit(127);
     }
@@ -328,8 +380,7 @@ void exec_command(struct command_t *command) {  // execv function
       exit(127);
     }
 
-    // strtok modifies the string, so work on a copy of PATH.
-    char *path_copy = strdup(path_env);
+    char *path_copy = strdup(path_env); // strtok modifies the string, so work on a copy of PATH.
 
     // split PATH by ':'
     // example PATH:
@@ -342,25 +393,18 @@ void exec_command(struct command_t *command) {  // execv function
       // directory + "/" + command name
       char fullpath[1024];
       snprintf(fullpath, sizeof(fullpath), "%s/%s", dir, command->name);
+ 
+      if (access(fullpath, X_OK) == 0) { // check if file exists and is executable
 
-      // check if file exists and is executable
-      if (access(fullpath, X_OK) == 0) {
+        execv(fullpath, command->args);  // if executable found run it
 
-        // if executable found run it
-        execv(fullpath, command->args);
-
-        // if execv returns it failed
-        perror("execv failed");
+        perror("execv failed");  // if execv returns it failed
         free(path_copy);
         exit(127);
       }
-
-      // try next directory
       dir = strtok(NULL, ":");
     }
-
-    // if we exit the loop, command was not found anywhere in PATH.
-    fprintf(stderr, "-%s: %s: command not found\n", sysname, command->name);
+    fprintf(stderr, "-%s: %s: command not found\n", sysname, command->name);  // if we exit the loop, command was not found anywhere in PATH.
 
     free(path_copy);
     exit(127);
@@ -380,11 +424,11 @@ int cut_command(struct command_t *command) { // cut command implementation
       if (command->args[i] == NULL) break;
 
       if (strcmp(command->args[i], "-d") == 0 || strcmp(command->args[i], "--delimiter") == 0) {
-	// handle the special case where user typed -d " " (space delimiter)
+	// handle the case where user typed -d " " (space delimiter)
 	// the parser splits " " into two quote characters
 	if (command->args[i+1][0] == '"' || command->args[i+1][0] == '\'') {
 	  delimiter = ' ';
-	  i += 2; //skip the space and quotation 
+	  i++; //skip the space and quotation 
 	} else {
 	  delimiter = command->args[i+1][0];
 	  i++;    // skip the delimiter since it is already obtained
@@ -392,17 +436,17 @@ int cut_command(struct command_t *command) { // cut command implementation
       }
 
       if (strncmp(command->args[i], "-f", 2) == 0 || strcmp(command->args[i], "--fields") == 0) {  //strncmp because -f1,3,6 is count as one arg
-
-	char *fields_str;
+	char fields_copy[64];  //work on a copy to not modify the args field
    	
 	if (strncmp(command->args[i], "-f", 2) == 0) {
-	    fields_str = command->args[i] + 2; // points to 1,3,6 part of -f1,3,6 
+	    strncpy(fields_copy, command->args[i] + 2, sizeof(fields_copy) - 1); // points to 1,3,6 part of -f1,3,6 
 	  } else {
-	    fields_str = command->args[i+1];
+	    strncpy(fields_copy, command->args[i+1], sizeof(fields_copy) - 1);
 	    i++;
 	  }
-	  
-	char *token = strtok(fields_str, ",");
+	fields_copy[sizeof(fields_copy) - 1] = '\0';  // null terminate
+
+	char *token = strtok(fields_copy, ",");
 	while (token != NULL) {
 	  fields[field_count] = atoi(token) - 1; // convert to 0-indexed and store 
 	  token = strtok(NULL, ",");
@@ -414,23 +458,25 @@ int cut_command(struct command_t *command) { // cut command implementation
     char line[4096];
     char *tokens[256];
     char *token;
+    char delim_str[2] = {delimiter, '\0'};
+    
     while (fgets(line, sizeof(line), stdin)) {  //loop over each line
-      int token_count = 0;
+      int token_count = 0; 
       
-        // strip trailing newline
+      // strip trailing newline
       line[strcspn(line ,"\n")] = '\0';
       
-        // tokenize the line by delimiter
-        // store tokens in char *tokens[256], count them
-      token = strtok(line, &delimiter);
-      while (token != NULL) {
+      // tokenize the line by delimiter
+      // store tokens in char *tokens[256], count them
+      token = strtok(line, delim_str);
+      while (token != NULL) { 
 	tokens[token_count] = token; 
-	token = strtok(NULL, &delimiter);
-        token_count++;
-	}
+	token = strtok(NULL, delim_str);
+	token_count++;
+      }
 
-        // print the requested fields separated by delimiter
-        // print newline at the end
+      // print the requested fields separated by delimiter
+      // print newline at the end
       for (int j = 0; j < field_count; j++) {
 	if (fields[j] < token_count) {  // makes sure you don't try to access a token that doesn't exist
 	  printf("%s", tokens[fields[j]]);
@@ -465,7 +511,7 @@ void join_chatroom(struct command_t *command) {
   mkdir(room_path, 0777);
 
   // build user pipe path and create it /tmp/chatroom-<roomname>/<username>
-  char user_pipe[256];
+  char user_pipe[512];
   snprintf(user_pipe, sizeof(user_pipe), "%s/%s", room_path, username);
   mkfifo(user_pipe, 0666);
   printf("Welcome to %s!\n", roomname);
@@ -508,6 +554,9 @@ void join_chatroom(struct command_t *command) {
             if (fgets(input, sizeof(input), stdin) == NULL) break;  //breaks if stdin closes 
             input[strcspn(input, "\n")] = '\0';  // strip newline
 	    if (strlen(input) == 0) continue; // skip empty message
+
+	    // exit the chatroom if user types exit
+            if (strcmp(input, "exit") == 0) break;
 
             // build message: "username: message"
             char message[1280];
@@ -566,9 +615,18 @@ int process_command(struct command_t *command) {
 
   if (strcmp(command->name, "chatroom") == 0) {
       join_chatroom(command);
-      exit(0);
+      return SUCCESS;
   }
 
+  // ------------------ PART 3c history command-----------
+
+  if (strcmp(command->name, "history") == 0) {
+      for (int i = 0; i < history_count; i++) {
+	printf("%d %s\n", i+1, history[i]);
+      }
+      return SUCCESS;
+      }
+      
   // PART 2-piping
   if (command->next) {
     int fd[2];
@@ -583,7 +641,7 @@ int process_command(struct command_t *command) {
       close(fd[1]);
 
       if (strcmp(command->name, "cut") == 0) {  // for calls with piping (cat /etc/passwd | cut -d ":" -f1,6)
-	cut_command(command);
+        cut_command(command);
 	exit(0);
 	}
        
@@ -598,6 +656,7 @@ int process_command(struct command_t *command) {
       dup2(fd[0], STDIN_FILENO);
       close(fd[1]);
       close(fd[0]);
+
       exit(process_command(command->next));
     }
 
@@ -644,7 +703,7 @@ int process_command(struct command_t *command) {
     if (strcmp(command->name, "cut") == 0) {  // for calls with redirection (cut -d ":" -f1,3 <test.txt)
       cut_command(command);
       exit(0);
-      }
+      }	
 
     /// This shows how to do exec with environ (but is not available on MacOs)
     // extern char** environ; // environment variables
@@ -662,11 +721,8 @@ int process_command(struct command_t *command) {
 
     exec_command(command);
     exit(127);
-
     printf("-%s: %s: command not found\n", sysname, command->name);
-    //exec_command(command); // never returns on success
-    exit(127);
-    
+
   } else {
     // TODO: implement background processes here
     //wait(0); // wait for child process to finish
