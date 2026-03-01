@@ -7,6 +7,9 @@
 #include <termios.h> // termios, TCSANOW, ECHO, ICANON
 #include <unistd.h>
 #include <fcntl.h> //for open()
+#include <dirent.h>   // DIR, opendir, readdir, closedir
+#include <sys/stat.h> // mkdir, mkfifo
+
 const char *sysname = "shellish";
 
 enum return_codes {
@@ -307,6 +310,7 @@ int prompt(struct command_t *command) {
   return SUCCESS;
 }
 
+// ------------------- PART 1 --------------------------
 void exec_command(struct command_t *command) {  // execv function
      // if the command contains '/' (eg. /bin/ls) call execv() directly 
     if (strchr(command->name, '/')) {  
@@ -362,7 +366,7 @@ void exec_command(struct command_t *command) {  // execv function
     exit(127);
   
 }
-
+//------------------ PART 2-cut ---------------
 int cut_command(struct command_t *command) { // cut command implementation
   
   if (strcmp(command->name, "cut") == 0) {
@@ -392,7 +396,7 @@ int cut_command(struct command_t *command) { // cut command implementation
 	char *fields_str;
    	
 	if (strncmp(command->args[i], "-f", 2) == 0) {
-	    fields_str = command->args[i] + 2; // points to 1,3,6 part of -f1,3,6
+	    fields_str = command->args[i] + 2; // points to 1,3,6 part of -f1,3,6 
 	  } else {
 	    fields_str = command->args[i+1];
 	    i++;
@@ -420,7 +424,7 @@ int cut_command(struct command_t *command) { // cut command implementation
         // store tokens in char *tokens[256], count them
       token = strtok(line, &delimiter);
       while (token != NULL) {
-	tokens[token_count] = token;
+	tokens[token_count] = token; 
 	token = strtok(NULL, &delimiter);
         token_count++;
 	}
@@ -442,6 +446,107 @@ int cut_command(struct command_t *command) { // cut command implementation
   return SUCCESS;
 }
 
+//------------- PART 3-chatroom --------------------- 
+void join_chatroom(struct command_t *command) {
+  
+  if (command->arg_count < 4) {  // validates that rommname and username is provided
+    printf("Usage: chatroom <roomname> <username>\n"); 
+      return;
+  }
+
+  char *roomname = command->args[1];
+  char *username = command->args[2];
+
+  char room_path[256];
+  snprintf(room_path, sizeof(room_path), "/tmp/chatroom-%s", roomname);  // build the room folder path /tmp/chatroom-<roomname>
+ 
+
+  // create room folder if it doesn't exist
+  mkdir(room_path, 0777);
+
+  // build user pipe path and create it /tmp/chatroom-<roomname>/<username>
+  char user_pipe[256];
+  snprintf(user_pipe, sizeof(user_pipe), "%s/%s", room_path, username);
+  mkfifo(user_pipe, 0666);
+  printf("Welcome to %s!\n", roomname);
+
+  // fork the process one for read one for write
+  pid_t pid = fork();
+
+  //-------CHILD--------
+  if (pid == 0) {
+    // child process is for reading
+    // opens your users named pipe and prints incoming messages
+    
+    int fd = open(user_pipe, O_RDONLY);  // open your own pipe for reading
+    char buf[1024];  // temp storage for read messages from the pipe
+    while (1) {  // always waits for new messages
+      int n = read(fd, buf, sizeof(buf) - 1);  // read message from pipe into buf, n is number of bytes read
+      if (n > 0) {
+	buf[n] = '\0';  // null terminate the mesage 
+	buf[strcspn(buf, "\n")] = '\0';  //strip newline
+	
+        printf("\r\033[K[%s] %s\n", roomname, buf);  // erases the the previous prompt and prints the message received 
+        fflush(stdout);
+
+	// reprint the prompt after receiving a message
+        printf("[%s] %s > ", roomname, username); 
+        fflush(stdout);
+      }
+    }
+        close(fd);
+        exit(0);
+	
+  } else {
+    //-------PARENT--------
+        // parent process for writing
+    char input[1024]; //input buffer
+        while (1) {
+	  printf("[%s] %s > ", roomname, username); 
+          fflush(stdout);
+
+            if (fgets(input, sizeof(input), stdin) == NULL) break;  //breaks if stdin closes 
+            input[strcspn(input, "\n")] = '\0';  // strip newline
+	    if (strlen(input) == 0) continue; // skip empty message
+
+            // build message: "username: message"
+            char message[1280];
+            snprintf(message, sizeof(message), "%s: %s", username, input);
+
+            DIR *dir = opendir(room_path); //open room folder 
+            if (dir == NULL) break;
+
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL) {  // iterate over each named pipe in the room folder
+              // skip your own pipe
+	      if (strcmp(entry->d_name, username) == 0) continue; 
+
+              // build path to other user's named pipe
+              char other_pipe[512];
+              snprintf(other_pipe, sizeof(other_pipe), "%s/%s", room_path, entry->d_name);
+
+              // fork a child to write open() on a pipe blocks until
+              // someone reads, so we fork to avoid freezing the shell
+		
+              pid_t writer_pid = fork();
+              if (writer_pid == 0) {
+		int wfd = open(other_pipe, O_WRONLY);  // open other user's named pipe for writing
+	        if (wfd != -1) {  // if open
+		write(wfd, message, strlen(message));  // write the message then close file desc
+	        close(wfd);  
+                }
+                exit(0); 
+	      }
+            }
+            closedir(dir);
+        }
+        // kill the reader child when exiting
+        kill(pid, SIGTERM); 
+        waitpid(pid, NULL, 0);  //remove zombie's entry from process table (reaped)
+    }
+	
+}
+  
 int process_command(struct command_t *command) {
   int r;
   if (strcmp(command->name, "") == 0)
@@ -459,6 +564,10 @@ int process_command(struct command_t *command) {
     }
   }
 
+  if (strcmp(command->name, "chatroom") == 0) {
+      join_chatroom(command);
+      exit(0);
+  }
 
   // PART 2-piping
   if (command->next) {
@@ -551,7 +660,11 @@ int process_command(struct command_t *command) {
     printf("-%s: %s: command not found\n", sysname, command->name);
     exit(127);*/
 
-    exec_command(command); // never returns on success
+    exec_command(command);
+    exit(127);
+
+    printf("-%s: %s: command not found\n", sysname, command->name);
+    //exec_command(command); // never returns on success
     exit(127);
     
   } else {
