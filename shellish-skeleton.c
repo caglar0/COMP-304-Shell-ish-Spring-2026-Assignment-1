@@ -60,7 +60,7 @@ void print_command(struct command_t *command) {
  * @param  command [description]
  * @return         [description]
  */
-/*int free_command(struct command_t *command) {
+int free_command(struct command_t *command) {
   if (command->arg_count) {
     for (int i = 0; i < command->arg_count; ++i)
       free(command->args[i]);
@@ -76,52 +76,13 @@ void print_command(struct command_t *command) {
   free(command->name);
   free(command);
   return 0;
-}*/
-
-int free_command(struct command_t *command) {
-  printf("DEBUG: freeing command: %s\n", command->name);
-  fflush(stdout);
-
-  if (command->arg_count) {
-    for (int i = 0; i < command->arg_count; ++i) {
-      printf("DEBUG: freeing arg[%d]: %s\n", i, command->args[i]);
-      fflush(stdout);
-      free(command->args[i]);
-    }
-    printf("DEBUG: freeing args array\n");
-    fflush(stdout);
-    free(command->args);
-  }
-
-  for (int i = 0; i < 3; ++i) {
-    if (command->redirects[i]) {
-      printf("DEBUG: freeing redirect[%d]: %s\n", i, command->redirects[i]);
-      fflush(stdout);
-      free(command->redirects[i]);
-    }
-  }
-
-  if (command->next) {
-    printf("DEBUG: freeing next command\n");
-    fflush(stdout);
-    free_command(command->next);
-    command->next = NULL;
-  }
-
-  printf("DEBUG: freeing command name: %s\n", command->name);
-  fflush(stdout);
-  free(command->name);
-
-  printf("DEBUG: freeing command struct\n");
-  fflush(stdout);
-  free(command);
-  return 0;
 }
-
 /**
  * Show the command prompt
  * @return [description]
  */
+
+
 int show_prompt() {
   char cwd[1024], hostname[1024];
   gethostname(hostname, sizeof(hostname));
